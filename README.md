@@ -1,3 +1,5 @@
+## NOT READY! 
+
 ## Deutsch
 "Willkommen in unserem Repository! Hier speichern wir den Code für unser Gildenprojekt in 'Die Siedler Online'. Der erstellte Code ist unser geistiges Eigentum und unterliegt den entsprechenden Urheberrechts- und Datenschutzbestimmungen der EU (Deutschland).
 
