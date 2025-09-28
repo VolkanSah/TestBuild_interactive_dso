@@ -3,14 +3,41 @@
  * Verantwortlich für State Management, Daten-Loading und globale Schnittstellen.
  */
 
-// Globaler Zustand und Daten
+// Globaler Zustand (Unmittelbar verfügbar)
 let allGenerals = [];
 let allUnits = [];
 let allAdventures = [];
 let allMaps = [];
 let markerData = {}; // {id: {x, y, waves: [...]}}
 let markerIdCounter = 0;
+let isSystemInitialized = false;
 
+// --- GLOBALE SCHNITTSTELLEN (SOFORT VERFÜGBAR FÜR marker.js) ---
+
+window.getNextMarkerId = function() {
+    return ++markerIdCounter;
+};
+
+// Diese Funktion wird von marker.js aufgerufen. Die interne Logik wird später definiert.
+window.openMarkerConfig = function(id, x, y) {
+    if (!isSystemInitialized) {
+        console.warn("System nicht initialisiert. openMarkerConfig übersprungen.");
+        return;
+    }
+    window._openMarkerConfigInternal(id, x, y);
+};
+
+window.removeMarkerData = function(id) {
+    if (!isSystemInitialized) return;
+    window._removeMarkerDataInternal(id);
+};
+
+window.updateMarkerPosition = function(id, newX, newY) {
+    if (!isSystemInitialized) return;
+    window._updateMarkerPositionInternal(id, newX, newY);
+};
+
+// --- DOMContentLoaded für Initialisierung und interne Logik ---
 document.addEventListener('DOMContentLoaded', async function() {
     const mapSelector = document.getElementById('map-selector');
     const mainMap = document.getElementById('main-map');
@@ -19,8 +46,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     const adventurePlayers = document.getElementById('adventure-players');
     const lagerList = document.getElementById('lager-list');
 
-    // --- HILFSFUNKTIONEN (Lokal definiert) ---
-
+    // --- Data Loading Functions ---
     async function loadData() {
         const [generalsRes, unitsRes, mapsRes, mapLoaderRes] = await Promise.all([
             fetch('data/generals.json'),
@@ -34,9 +60,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         allMaps = (await mapLoaderRes.json()).map_loader;
     }
 
+    // --- Map Selector Logic ---
     function showAdventureDetails(selectedMapName) {
         const adventure = allAdventures.find(a => a.Abenteuer === selectedMapName);
-        // ... (Details anzeigen) ...
         if (adventure) {
             adventureType.textContent = `Zuordnung: ${adventure.Zuordnung}`;
             adventureLevel.textContent = `Level: ${adventure.Level}`;
@@ -48,11 +74,15 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
 
-    // BEHEBT TypeError: can't access property "text", selectedOption is undefined
+    // Behebt TypeError: can't access property "text", selectedOption is undefined
     function updateMapAndDetails() {
         const selectedOption = mapSelector.options[mapSelector.selectedIndex];
         
-        if (!selectedOption) return; // Sicherheits-Check
+        if (!selectedOption || mapSelector.selectedIndex === -1) {
+             // Sicherstellen, dass die Initialisierung nicht fehlschlägt, falls keine Option existiert
+             console.warn("Karten-Option nicht gefunden oder nicht ausgewählt.");
+             return; 
+        }
         
         const selectedMapName = selectedOption.textContent;
         const imgSrc = selectedOption.value;
@@ -69,15 +99,15 @@ document.addEventListener('DOMContentLoaded', async function() {
             mapSelector.appendChild(option);
         });
         
-        // Initialisiere die Karte und Details, um den Fehler zu vermeiden
         if (allMaps.length > 0) {
-            mapSelector.selectedIndex = 0;
-            updateMapAndDetails(); 
+            mapSelector.selectedIndex = 0; // Wählt die erste Option
+            updateMapAndDetails(); // Initialisiert die Ansicht sofort
         }
     }
     
     // --- Marker/Lager Konfigurations-Logik ---
 
+    // Behebt den internen ReferenceError, da diese Funktion nun im gleichen Closure liegt
     function populateGeneralSelector(selector, currentGeneralName) {
         selector.innerHTML = '<option value="">General wählen</option>';
         allGenerals.forEach(general => {
@@ -116,7 +146,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             lagerList.appendChild(listItem);
         }
 
-        // ... (komplette HTML-Struktur) ...
         listItem.innerHTML = `
             <div>
                 Lager ${id}
@@ -133,9 +162,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             </div>
         `;
 
-        // Fülle Generals und hänge Event-Listener an
         const generalSelector = document.getElementById(`general-type-select-${id}`);
-        // populateGeneralSelector ist hier im Scope (kein ReferenceError)
         populateGeneralSelector(generalSelector, data.waves[0].general);
         
         const unitsTypeSelect = document.getElementById(`units-type-select-${id}`);
@@ -146,7 +173,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             populateUnitInputs(unitsContainer, selectedType);
         });
         
-        // Initiales Befüllen der Einheiten
         if (data.waves[0].unitType) {
             unitsTypeSelect.value = data.waves[0].unitType;
             populateUnitInputs(unitsContainer, data.waves[0].unitType);
@@ -160,12 +186,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
     
-    // --- GLOBALE SCHNITTSTELLEN (Für marker.js) ---
-
-    // Exponiere die Funktionen, um den ReferenceError zu beheben.
-    window.getNextMarkerId = function() { return ++markerIdCounter; };
+    function updateAllMarkerIds() {
+        // Implementiere Re-Indexing hier
+    }
     
-    window.openMarkerConfig = function(id, x, y) {
+    // --- INTERNE IMPLEMENTIERUNGEN DER GLOBALEN FUNKTIONEN ---
+    
+    // Weisen Sie die interne Logik den bereits definierten globalen Funktionen zu
+    window._openMarkerConfigInternal = function(id, x, y) {
         if (!markerData[id]) {
             markerData[id] = { 
                 id: id, 
@@ -175,33 +203,26 @@ document.addEventListener('DOMContentLoaded', async function() {
             };
         }
         addMarkerConfigToList(markerData[id]);
-        // TODO: Konfigurationspanel anzeigen
     };
-    
-    window.removeMarkerData = function(id) {
+
+    window._removeMarkerDataInternal = function(id) {
         delete markerData[id];
         removeLagerFromList(id);
-        // Da die ID-Logik jetzt in main.js liegt, müsste hier auch das Re-Indexing passieren
         updateAllMarkerIds(); 
     };
 
-    window.updateMarkerPosition = function(id, newX, newY) {
+    window._updateMarkerPositionInternal = function(id, newX, newY) {
         if (markerData[id]) {
             markerData[id].x = newX;
             markerData[id].y = newY;
         }
     };
     
-    function updateAllMarkerIds() {
-        // Die Logik für das Neunummerieren der Marker auf der Karte und in den Daten
-        // ist komplexer und sollte hier nach Bedarf implementiert werden.
-        // Fürs Erste: Nur die Zählerlogik zurücksetzen und die Liste aufräumen.
-        // Die eigentliche Neunummerierung der Marker-Elemente erfolgt im marker.js
-    }
-    
     // --- INITIALISIERUNG ---
     await loadData();
-    populateMapSelector(); // Füllt Map Dropdown und zeigt initiale Map
+    populateMapSelector(); 
     
     mapSelector.addEventListener('change', updateMapAndDetails);
+    
+    isSystemInitialized = true; // System ist jetzt einsatzbereit
 });
