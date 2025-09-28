@@ -1,280 +1,258 @@
-/**
- * main.js - Kernlogik für den DSO Taktik-Editor.
- * Verantwortlich für UI-Initialisierung, Daten-Loading, Zustandsverwaltung und Konfiguration.
- * Copyright (c) 2024 Volkan Sah / Open Source Community
- */
+// main.js - State Management & UI Control
+// Enthält alle Daten, die Logik für Karten- und General-Selektoren, 
+// die Lager-Liste und Funktionen, die von marker.js benötigt werden.
+
+// Data and State storage
+let allGenerals = [];
+let allUnits = [];
+let allAdventures = [];
+let allMaps = [];
+let markerData = {}; // Stores all marker configurations: {id: {x, y, waves: [...]}}
+let markerIdCounter = 0;
 
 document.addEventListener('DOMContentLoaded', async function() {
-    // --- KONSTANTEN
-    const LOCAL_STORAGE_KEY = "TSO_EDITOR_STATE";
-    const GENERAL_PLACEHOLDER_IMG = "assets/images/general/placeholder.png"; // Platzhalterbild, falls URL fehlt oder ungültig ist
-
-    // --- UI-ELEMENTE
     const mapSelector = document.getElementById('map-selector');
     const mainMap = document.getElementById('main-map');
     const adventureType = document.getElementById('adventure-type');
     const adventureLevel = document.getElementById('adventure-level');
     const adventurePlayers = document.getElementById('adventure-players');
-    const configPanel = document.getElementById('marker-config-panel'); // Das Panel zur General/Einheiten-Eingabe
+    const lagerList = document.getElementById('lager-list');
 
-    // --- DATEN-CACHE: Speichert geladene JSON-Daten (Performance-Optimierung)
-    const DATA_CACHE = {};
-    
-    // --- ZENTRALER SPEICHER FÜR DEN ZUSTAND DER ANWENDUNG
-    let editorState = {
-        currentMapSrc: '',
-        markers: [] // Array von { id, x, y, config: {...} }
-    };
-    let currentMarkerId = null; // ID des aktuell bearbeiteten Markers
-
-    // ====================================================================
-    // --- ZUSTANDSVERWALTUNG (CRUD für Marker)
-    // ====================================================================
-
-    /** Gibt die Daten des Markers zurück. */
-    function getMarkerData(id) {
-        return editorState.markers.find(m => m.id === id);
-    }
-    
-    /** Fügt einen neuen Marker hinzu oder aktualisiert einen bestehenden. */
-    function setMarkerData(id, data, onlyPositionUpdate = false) {
-        let marker = getMarkerData(id);
-        
-        if (!marker) {
-            // Neuer Marker
-            marker = {
-                id: id,
-                x: data.x,
-                y: data.y,
-                config: {
-                    generalName: "",
-                    skillLevel: 0,
-                    unitType: "normal",
-                    units: []
-                }
-            };
-            editorState.markers.push(marker);
-        } else if (onlyPositionUpdate) {
-            // Nur Position aktualisieren (nach Drag-and-Drop)
-            marker.x = data.x;
-            marker.y = data.y;
-        } else {
-            // Allgemeine Konfigurationsdaten aktualisieren (z.B. aus dem configPanel)
-            Object.assign(marker.config, data.config);
-        }
-        
-        saveEditorState();
+    // --- Data Loading Functions ---
+    async function loadData() {
+        // Lädt alle JSON-Dateien parallel
+        const [generalsRes, unitsRes, mapsRes, mapLoaderRes] = await Promise.all([
+            fetch('data/generals.json'),
+            fetch('data/units.json'),
+            fetch('data/maps.json'),
+            fetch('data/map_loader.json')
+        ]);
+        allGenerals = (await generalsRes.json()).generals;
+        allUnits = (await unitsRes.json()).units;
+        allAdventures = (await mapsRes.json()).abenteuer;
+        allMaps = (await mapLoaderRes.json()).map_loader;
     }
 
-    /** Entfernt einen Marker aus dem Zustand. */
-    window.removeMarkerData = function(id) {
-        editorState.markers = editorState.markers.filter(m => m.id !== id);
-        saveEditorState();
-        if (currentMarkerId === id) {
-             configPanel.style.display = 'none'; // Versteckt das Panel
-        }
-    };
-    
-    /** Stellt alle Marker visuell wieder her (von localStorage). */
-    function restoreMarkers(markers) {
-        let maxId = 0;
-        markers.forEach(marker => {
-            // Ruft die globale Funktion in marker.js auf, um den visuellen Marker zu erstellen
-            if (window.restoreMarker) {
-                window.restoreMarker(marker.id, marker.x, marker.y);
-                maxId = Math.max(maxId, marker.id);
-            }
-        });
-        // Setzt den Marker-Zähler in marker.js korrekt zurück
-        if (window.setMarkerIdCounter) {
-            window.setMarkerIdCounter(maxId);
-        }
-    }
-
-
-    // ====================================================================
-    // --- SPEICHERVERWALTUNG (localStorage)
-    // ====================================================================
-
-    /** Speichert den gesamten Editor-Zustand. */
-    function saveEditorState() {
-        try {
-            editorState.currentMapSrc = mainMap.src;
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(editorState));
-        } catch (e) {
-            console.error("Fehler beim Speichern in localStorage:", e);
-        }
-    }
-
-    /** Lädt den letzten gespeicherten Zustand. */
-    function loadEditorState() {
-        try {
-            const serializedState = localStorage.getItem(LOCAL_STORAGE_KEY);
-            if (serializedState === null) return false;
-
-            const state = JSON.parse(serializedState);
-            editorState = state; 
-            
-            if (state.currentMapSrc) {
-                mainMap.src = state.currentMapSrc;
-            }
-            
-            if (state.markers && state.markers.length > 0) {
-                 restoreMarkers(state.markers); 
-            }
-            return true;
-
-        } catch (e) {
-            console.error("Fehler beim Laden/Parsen des gespeicherten Zustands:", e);
-            localStorage.removeItem(LOCAL_STORAGE_KEY);
-            return false;
-        }
-    }
-
-    // ====================================================================
-    // --- DATENLADE-FUNKTIONEN (Caching)
-    // ====================================================================
-
-    // Generalisierte Ladefunktion mit Caching
-    async function fetchDataAndCache(path, rootKey) {
-        if (DATA_CACHE[rootKey]) return DATA_CACHE[rootKey];
-        const response = await fetch(path);
-        const data = await response.json();
-        DATA_CACHE[rootKey] = data[rootKey] || data;
-        return DATA_CACHE[rootKey];
-    }
-    
-    async function loadMaps() { return fetchDataAndCache('data/map_loader.json', 'map_loader'); }
-    async function loadAdventureDetails() { return fetchDataAndCache('data/maps.json', 'abenteuer'); }
-    async function loadGenerals() { return fetchDataAndCache('data/generals.json', 'generals'); }
-    async function loadUnits() { return fetchDataAndCache('data/units.json', 'units'); }
-    
-    // ====================================================================
-    // --- GLOBALE SCHNITTSTELLE UND KONFIGURATION
-    // ====================================================================
-
-    /**
-     * GLOBALE SCHNITTSTELLE für marker.js: Öffnet das Konfigurations-Panel 
-     * für den gegebenen Marker oder speichert nur die Position.
-     * @param {number} id - Die ID des Markers.
-     * @param {Object} [posData] - Optional: { x, y } für Positions-Updates.
-     * @param {boolean} [onlyPositionUpdate] - Ob nur die Position aktualisiert wird.
-     */
-    window.openMarkerConfig = async function(id, posData, onlyPositionUpdate = false) {
-        currentMarkerId = id;
-        
-        if (posData) {
-            setMarkerData(id, posData, onlyPositionUpdate);
-            if (onlyPositionUpdate) return; // Nur gespeichert, kein Panel öffnen
-        }
-        
-        // Marker-Daten abrufen oder initialisieren
-        const markerData = getMarkerData(id);
-        
-        // 1. Konfigurations-Panel anzeigen und Titel setzen
-        configPanel.style.display = 'block';
-        document.getElementById('config-panel-title').textContent = `Lager ${id} konfigurieren`;
-
-        // 2. UI-Elemente mit gespeicherten Werten befüllen
-        
-        // TODO: UI-Befüllung und Listener-Logik hier hinzufügen.
-        // Die General- und Unit-Inputs müssen hier befüllt werden.
-
-        // Beispiel: Befüllung der General-Select-Box (muss im HTML vorhanden sein)
-        await populateGeneralSelector('config-general-select');
-        
-        // ... (Restliche Konfigurationslogik) ...
-    };
-
-    /**
-     * Befüllt ein General-Dropdown-Element dynamisch. (Angepasst für den Placeholder)
-     */
-    async function populateGeneralSelector(selectorId) {
-        const generalSelector = document.getElementById(selectorId);
-        if (!generalSelector) return; 
-
-        const generals = await loadGenerals();
-        generalSelector.innerHTML = '<option value="">General wählen</option>'; 
-        
-        generals.forEach(general => {
+    // --- Map Selector Logic ---
+    function populateMapSelector() {
+        allMaps.forEach(map => {
             const option = document.createElement('option');
-            // Verwendet den General-Namen als eindeutigen Wert
-            option.value = general.name; 
-            option.textContent = general.name;
-            // Datenattribut für Bild hinzufügen (wird später für die Anzeige genutzt)
-            const imgSrc = general.general_img && general.general_img.endsWith('.png') ? general.general_img : GENERAL_PLACEHOLDER_IMG;
-            option.dataset.imgSrc = imgSrc;
-            
-            generalSelector.appendChild(option);
+            option.value = map.at_img;
+            option.textContent = map.at_loader_name;
+            mapSelector.appendChild(option);
         });
         
-        // Selektiert den gespeicherten Wert
-        const marker = getMarkerData(currentMarkerId);
-        if (marker && marker.config.generalName) {
-            generalSelector.value = marker.config.generalName;
-            // Trigger Change, um das General-Bild zu aktualisieren (falls es ein Listener gibt)
+        // Wählt die erste Karte aus und aktualisiert die Anzeige.
+        // Behebt den 'selectedOption is undefined' Fehler, da nun garantiert eine Option ausgewählt ist.
+        if (allMaps.length > 0) {
+            mapSelector.selectedIndex = 0;
+            updateMapAndDetails();
         }
     }
 
-    /**
-     * Erstellt Eingabefelder für Einheiten basierend auf dem ausgewählten Typ.
-     * (Wird von der config-Logik aufgerufen)
-     */
-    async function populateUnitInputs(type) {
-        const unitsContainer = document.getElementById('config-units-container');
-        if (!unitsContainer) return; 
+    function showAdventureDetails(selectedMapName) {
+        const adventure = allAdventures.find(a => a.Abenteuer === selectedMapName);
 
-        unitsContainer.innerHTML = ''; 
-        const units = await loadUnits();
-        const filteredUnits = units.filter(unit => unit.type === type); 
+        if (adventure) {
+            adventureType.textContent = `Zuordnung: ${adventure.Zuordnung}`;
+            adventureLevel.textContent = `Level: ${adventure.Level}`;
+            adventurePlayers.textContent = `Spieler: ${adventure['Spieler-Min']} - ${adventure['Spieler-Max']}`;
+        } else {
+            adventureType.textContent = 'Zuordnung: N/A';
+            adventureLevel.textContent = 'Level: N/A';
+            adventurePlayers.textContent = 'Spieler: N/A';
+        }
+    }
+
+    function updateMapAndDetails() {
+        const selectedOption = mapSelector.options[mapSelector.selectedIndex];
         
-        // Lade die gespeicherten Einheiten für diesen Marker
-        const marker = getMarkerData(currentMarkerId);
-        const storedUnits = marker ? marker.config.units : [];
+        if (!selectedOption) return; // Sollte durch populateMapSelector behoben sein, aber zur Sicherheit
+        
+        const selectedMapName = selectedOption.textContent;
+        const imgSrc = selectedOption.value;
+        
+        mainMap.src = imgSrc;
+        showAdventureDetails(selectedMapName);
+    }
+
+    mapSelector.addEventListener('change', updateMapAndDetails);
+    
+    // --- Marker/Lager Logic Functions (Exposed to marker.js) ---
+    
+    function getNextMarkerId() {
+        return ++markerIdCounter;
+    }
+    
+    /**
+     * Called by marker.js on marker creation or click. 
+     * Creates or updates the marker's data object and config UI in the list.
+     */
+    function openMarkerConfig(id, x, y) {
+        if (!markerData[id]) {
+            markerData[id] = { 
+                id: id, 
+                x: x, 
+                y: y, 
+                waves: [{ general: '', unitType: 'normal', units: {} }] // Minimal initial structure
+            };
+        }
+        
+        // Stellt die UI für diesen Marker in der Lager-Liste her/aktualisiert sie
+        addMarkerConfigToList(markerData[id]);
+        
+        console.log(`Marker ${id} configured at (${x}, ${y}). Data:`, markerData[id]);
+    }
+    
+    /**
+     * Called by marker.js on dblclick removal. 
+     * Removes marker data and re-indexes all remaining markers.
+     */
+    function removeMarkerData(id) {
+        delete markerData[id];
+        removeLagerFromList(id);
+        
+        // Re-nummeriert Marker und aktualisiert Liste/Daten
+        updateAllMarkerIds(); 
+    }
+    
+    /**
+     * Called by marker.js on dragend.
+     * Updates the data position.
+     */
+    function updateMarkerPosition(id, newX, newY) {
+        if (markerData[id]) {
+            markerData[id].x = newX;
+            markerData[id].y = newY;
+            console.log(`Marker ${id} position updated to (${newX}, ${newY})`);
+        }
+    }
+
+    // --- Configuration UI Generation (General, Units) ---
+    
+    function populateGeneralSelector(selector, currentGeneralName) {
+        selector.innerHTML = '<option value="">General wählen</option>';
+        allGenerals.forEach(general => {
+            const option = document.createElement('option');
+            option.value = general.name;
+            option.textContent = general.name;
+            if (general.name === currentGeneralName) {
+                 option.selected = true;
+            }
+            selector.appendChild(option);
+        });
+    }
+
+    function populateUnitInputs(unitsContainer, selectedType) {
+        unitsContainer.innerHTML = ''; 
+        const filteredUnits = allUnits.filter(unit => unit.type === selectedType);
 
         filteredUnits.forEach(unit => {
             const unitDiv = document.createElement('div');
-            unitDiv.className = 'unit-input-group';
-            
-            // Suche den gespeicherten Wert
-            const storedAmount = storedUnits.find(u => u.name === unit.name)?.amount || 0;
-
             unitDiv.innerHTML = `
-                <img src="${unit.unit_img}" alt="${unit.name}" style="width: 30px; height: 30px;">
-                <input type="number" 
-                       name="unit_${unit.short_name || unit.name}" 
-                       placeholder="Anzahl ${unit.short_name || unit.name}" 
-                       step="1" min="0" max="200" 
-                       value="${storedAmount}">
+                <img src="${unit.unit_img || unit.unit_name}" alt="${unit.name}" style="width: 30px; height: 30px;">
+                <input type="number" name="unit_${unit.name}" placeholder="Anzahl ${unit.name}" step="1" min="0" max="200" required>
             `;
             unitsContainer.appendChild(unitDiv);
         });
+    }
+
+    function addMarkerConfigToList(data) {
+        const id = data.id;
+        let listItem = document.getElementById(`lager-item-${id}`);
+        if (listItem) {
+            // Wenn Element existiert, nur die inneren Daten aktualisieren (optional)
+        } else {
+            listItem = document.createElement('li');
+            listItem.className = 'list-group-item';
+            listItem.id = `lager-item-${id}`;
+            lagerList.appendChild(listItem);
+        }
+
+        // Generiere die komplexe HTML-Struktur
+        listItem.innerHTML = `
+            <div>
+                Lager ${id}
+                <input type="number" name="wellen_anzahl" placeholder="0" step="1" value="1" min="0" max="25" required>
+                <select name="general_type_select" id="general-type-select-${id}"></select>
+                <input type="number" name="skill_garnisonsanbau" placeholder="0" step="5" min="0" max="15" required>
+                <input type="color" name="general_color" value="#ff0000">
+                <select name="units_type_select" id="units-type-select-${id}">
+                    <option value="">Einheitstype</option>
+                    <option value="normal">Kaserne</option>
+                    <option value="elite-einheiten">Elite</option>
+                </select>
+                <div id="units-container-${id}"></div>
+            </div>
+        `;
+
+        // Fülle Generals und hänge Event-Listener an
+        const generalSelector = document.getElementById(`general-type-select-${id}`);
+        populateGeneralSelector(generalSelector, data.waves[0].general);
         
-        // Da die Inputs neu erstellt werden, müssen die Event-Listener für Speicherung
-        // am übergeordneten configPanel definiert sein (Delegate).
+        const unitsTypeSelect = document.getElementById(`units-type-select-${id}`);
+        const unitsContainer = document.getElementById(`units-container-${id}`);
+
+        // Fügt den Event-Listener für den Gerätetyp-Wechsel hinzu
+        unitsTypeSelect.addEventListener('change', function(event) {
+            const selectedType = event.target.value;
+            populateUnitInputs(unitsContainer, selectedType);
+        });
+        
+        // Initiales Befüllen der Einheiten
+        if (data.waves[0].unitType) {
+            unitsTypeSelect.value = data.waves[0].unitType;
+            populateUnitInputs(unitsContainer, data.waves[0].unitType);
+        }
+    }
+
+    function removeLagerFromList(id) {
+        const listItem = document.getElementById(`lager-item-${id}`);
+        if (listItem) {
+            listItem.remove();
+        }
     }
     
-    // ... (populateMapSelector, showAdventureDetails bleiben erhalten) ...
+    function updateAllMarkerIds() {
+        const mapContainer = document.getElementById('map-container');
+        const markers = Array.from(mapContainer.querySelectorAll('.pointer'));
+        
+        lagerList.innerHTML = '';
+        markerIdCounter = 0;
+        let newMarkerData = {};
+        
+        // Gehe alle Marker durch, nummeriere neu (1, 2, 3...)
+        markers.forEach((marker, index) => {
+            const oldId = marker.id.replace('marker-', '');
+            const newId = index + 1;
+            
+            // Marker DOM aktualisieren
+            marker.id = `marker-${newId}`;
+            marker.textContent = newId;
+            
+            // markerData aktualisieren
+            if (markerData[oldId]) {
+                 newMarkerData[newId] = {...markerData[oldId], id: newId};
+            }
+            
+            // Liste aktualisieren (neu hinzufügen, um die korrekte Reihenfolge zu gewährleisten)
+            if (newMarkerData[newId]) {
+                addMarkerConfigToList(newMarkerData[newId]);
+            }
+            
+            markerIdCounter = newId;
+        });
 
-    // ====================================================================
-    // --- INITIALISIERUNG
-    // ====================================================================
-
-    // 1. Laden des gespeicherten Zustands und Wiederherstellung der visuellen Marker
-    loadEditorState();
-
-    // 2. Füllen der UI (Map-Selector)
-    await populateMapSelector();
+        markerData = newMarkerData; // Überschreibe alte Daten mit neu indexierten Daten
+    }
     
-    // 3. Markieren der globalen Funktionen für marker.js
-    window.openMarkerConfig = window.openMarkerConfig;
-    window.removeMarkerData = window.removeMarkerData;
-    window.setMarkerIdCounter = function(id) { markerId = id; }; // Funktion zum Zurücksetzen des Zählers im Marker-Skript
+    // --- Initialisierung & Globale Exposition ---
+    await loadData(); // Lädt alle JSON-Daten
+    populateMapSelector(); // Füllt Map Dropdown und zeigt initiale Map
     
-    // 4. Autosave-Listener
-    window.addEventListener('beforeunload', saveEditorState);
-    
-    // TODO: Event-Listener für das Config-Panel zur Speicherung der Daten
+    // Expose die notwendigen Funktionen für marker.js, um den ReferenceError zu beheben.
+    window.openMarkerConfig = openMarkerConfig;
+    window.removeMarkerData = removeMarkerData;
+    window.updateMarkerPosition = updateMarkerPosition;
+    window.getNextMarkerId = getNextMarkerId;
 });
-
-// ... (Restliche Funktionen aus der usprünglichen main.js, wie populateMapSelector, showAdventureDetails, sind hier)
