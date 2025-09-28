@@ -1,5 +1,7 @@
 // marker.js - Map Interaction & Marker Rendering
-// Ruft jetzt die global exponierten Funktionen in main.js auf.
+
+// marker.js " Private license" copyright volkan kücükbudak
+// You may not use my marker without my permission
 
 document.addEventListener('DOMContentLoaded', function() {
     const mapContainer = document.getElementById('map-container');
@@ -12,7 +14,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const x = ((event.clientX - rect.left) / rect.width) * 100;
         const y = ((event.clientY - rect.top) / rect.height) * 100;
         
-        // Ruft die Funktion aus main.js ab, um die nächste ID zu erhalten
+        // Ruft die Funktion aus main.js ab (funktioniert jetzt sofort)
         const id = window.getNextMarkerId ? window.getNextMarkerId() : Date.now(); 
         
         const marker = createMarker(x, y, id);
@@ -33,8 +35,7 @@ document.addEventListener('DOMContentLoaded', function() {
         marker.style.height = '30px';
         marker.textContent = id;
         marker.draggable = true;
-        
-        // --- Drag/Drop ---
+
         marker.addEventListener('dragend', function(event) {
             const mapRect = mapContainer.getBoundingClientRect();
             const newX = ((event.clientX - mapRect.left) / mapRect.width) * 100;
@@ -49,8 +50,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.updateMarkerPosition(id, finalX.toFixed(2), finalY.toFixed(2));
             }
         });
-        
-        // --- Doppelklick zum Löschen ---
+
         marker.addEventListener('dblclick', function() {
             marker.remove();
             
@@ -59,7 +59,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // --- Klick zum Konfigurieren ---
         marker.addEventListener('click', function(event) {
             event.stopPropagation(); 
             if (window.openMarkerConfig) {
