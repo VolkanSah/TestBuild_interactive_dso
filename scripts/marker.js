@@ -1,105 +1,111 @@
-// marker.js " Private license" copyright volkan kücükbudak
-// You may not use my marker without my permission
-// marker.js " Private license" copyright volkan kücükbudak
-// You may not use my marker without my permission
+// marker.js
+// Logik: Verantwortlich FÜR die Visualisierung und Steuerung der Marker auf der Karte.
+// Speicherung und Konfiguration werden komplett an main.js delegiert.
+
 document.addEventListener('DOMContentLoaded', function() {
     const mapContainer = document.getElementById('map-container');
     const mainMap = document.getElementById('main-map');
-    const lagerList = document.getElementById('lager-list');
-    let markerId = 0;
+    
+    // Der globale Zähler wird nun auch über die globale Funktion in main.js manipuliert.
+    let markerId = 0; 
+    
+    // Globale Schnittstellen zu main.js
+    const editMarker = window.openMarkerConfig || console.error.bind(console, "openMarkerConfig ist in main.js nicht definiert.");
+    const deleteMarkerData = window.removeMarkerData || console.error.bind(console, "removeMarkerData ist in main.js nicht definiert.");
 
+    // Event-Listener: Marker bei Klick auf die leere Karte erstellen
     mapContainer.addEventListener('click', function(event) {
-        if (event.target !== mainMap) return; // Prevents placing a marker on an existing marker
+        if (event.target !== mainMap) return; 
+        
         const rect = mainMap.getBoundingClientRect();
         const x = ((event.clientX - rect.left) / rect.width) * 100;
         const y = ((event.clientY - rect.top) / rect.height) * 100;
-        markerId++;
+        
+        markerId++; 
+        
         const marker = createMarker(x, y, markerId);
         mapContainer.appendChild(marker);
-        addLagerToList(markerId);
+        
+        // 1. Neuen Zustand in main.js erstellen und Konfigurations-Panel öffnen
+        editMarker(markerId, { x: `${x}%`, y: `${y}%` }); 
+        
+        // 2. Zustand speichern (wird in editMarker/openMarkerConfig ausgelöst)
     });
 
+    /**
+     * Erstellt das Marker-DOM-Element.
+     */
     function createMarker(x, y, id) {
         const marker = document.createElement('div');
         marker.className = 'pointer';
+        marker.dataset.markerId = id; 
         marker.style.left = `${x}%`;
         marker.style.top = `${y}%`;
-        marker.style.width = '30px';   // adjust size
-        marker.style.height = '30px';  // adjust size
+        marker.style.width = '30px'; 
+        marker.style.height = '30px'; 
         marker.textContent = id;
         marker.draggable = true;
 
+        // Klick-Handler: Öffnet das Konfigurations-Panel
+        marker.addEventListener('click', function(event) {
+            event.stopPropagation(); 
+            editMarker(id); 
+        });
+
+        // Drag-Handler: Aktualisiert Position und speichert Zustand in main.js
         marker.addEventListener('dragend', function(event) {
             const mapRect = mapContainer.getBoundingClientRect();
             const newX = ((event.clientX - mapRect.left) / mapRect.width) * 100;
             const newY = ((event.clientY - mapRect.top) / mapRect.height) * 100;
+            
+            // Marker visuell korrigieren
             marker.style.left = `${newX}%`;
             marker.style.top = `${newY}%`;
+            
+            // Ruft main.js auf: nur Position updaten, kein Panel öffnen
+            editMarker(id, { x: `${newX}%`, y: `${newY}%` }, true); 
         });
 
+        // Doppelklick-Handler: Marker und zugehörige Daten löschen
         marker.addEventListener('dblclick', function() {
             marker.remove();
-            removeLagerFromList(id);
-            updateMarkerIds();
+            deleteMarkerData(id); // Daten in main.js löschen
+            updateVisualMarkerIds(); // ID-Zähler visuell aktualisieren
         });
 
         return marker;
     }
 
-    function addLagerToList(id) {
-        const listItem = document.createElement('li');
-        listItem.className = 'list-group-item';
-        listItem.innerHTML = `
-            <div>
-                Lager ${id}
-                <input type="number" name="wellen_anzahl" placeholder="0" step="1" value="1" min="0" max="25" required>
-                <select name="general_type_select" id="general-type-select-${id}">
-                    <option value="">General wählen</option>
-                </select>
-                <input type="number" name="skill_garnisonsanbau" placeholder="0" step="5" min="0" max="15" required>
-                <input type="color" name="general_color" value="#ff0000">
-                <select name="units_type_select" id="units-type-select-${id}">
-                    <option value="">Einheitstype</option>
-                    <option value="normal">Kaserne</option>
-                    <option value="elite-einheiten">Elite</option>
-                </select>
-                <div id="units-container-${id}"></div>
-            </div>
-        `;
-        lagerList.appendChild(listItem);
-
-        // Dynamically load generals
-        populateGeneralSelector(`general-type-select-${id}`);
-        // Add device type event listener
-        document.getElementById(`units-type-select-${id}`).addEventListener('change', function(event) {
-            const selectedType = event.target.value;
-            populateUnitInputs(id, selectedType);
-        });
-    }
-
-    function removeLagerFromList(id) {
-        const listItem = Array.from(lagerList.children).find(item => item.textContent.includes(`Lager ${id}`));
-        if (listItem) {
-            listItem.remove();
-        }
-    }
-
-    function updateMarkerIds() {
-        markerId = 0;
+    /**
+     * Korrigiert die IDs der existierenden Marker und den Zähler.
+     * HINWEIS: Dies ist nur für die visuelle Anzeige nötig. Die ID im State bleibt erhalten.
+     */
+    function updateVisualMarkerIds() {
+        let currentId = 0;
         Array.from(mapContainer.children).forEach(marker => {
             if (marker.className === 'pointer') {
-                markerId++;
-                marker.textContent = markerId;
+                currentId++;
+                marker.textContent = currentId;
+                // WICHTIG: Die data-marker-Id bleibt die ursprünglich vergebene ID für den State!
+                // Nur der Text-Content ändert sich, um eine fortlaufende Nummerierung auf der Karte zu zeigen.
             }
         });
-        updateLagerList();
+        // Setzt den Zähler auf die höchste aktuell angezeigte ID zurück
+        markerId = currentId;
     }
+    
+    // Globale Funktion für main.js, um Marker von localStorage wiederherzustellen
+    window.restoreMarker = (id, x, y) => {
+        // Erstellt den Marker mit der originalen ID aus dem State
+        const marker = createMarker(parseFloat(x), parseFloat(y), id);
+        mapContainer.appendChild(marker);
+        // Da die IDs beim Laden unsortiert sein können, wird der Zähler in main.js gesetzt.
+    };
+    
+    // Globale Funktion, um den internen Zähler aus main.js zu setzen
+    window.setMarkerIdCounter = function(maxId) {
+        markerId = maxId;
+        updateVisualMarkerIds(); // Stellt sicher, dass die visuelle Zählung startet
+    };
 
-    function updateLagerList() {
-        lagerList.innerHTML = '';
-        for (let i = 1; i <= markerId; i++) {
-            addLagerToList(i);
-        }
-    }
 });
-
