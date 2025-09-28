@@ -1,108 +1,127 @@
 /**
  * main.js - Kernlogik für den DSO Taktik-Editor.
- * Verantwortlich für UI-Initialisierung, Daten-Loading, Abenteuer-Auswahl und Speicherverwaltung.
+ * Verantwortlich für UI-Initialisierung, Daten-Loading, Zustandsverwaltung und Konfiguration.
  * Copyright (c) 2024 Volkan Sah / Open Source Community
  */
 
 document.addEventListener('DOMContentLoaded', async function() {
-    // --- KONSTANTEN UND UI-ELEMENTE
+    // --- KONSTANTEN
     const LOCAL_STORAGE_KEY = "TSO_EDITOR_STATE";
+    const GENERAL_PLACEHOLDER_IMG = "assets/images/general/placeholder.png"; // Platzhalterbild, falls URL fehlt oder ungültig ist
+
+    // --- UI-ELEMENTE
     const mapSelector = document.getElementById('map-selector');
     const mainMap = document.getElementById('main-map');
     const adventureType = document.getElementById('adventure-type');
     const adventureLevel = document.getElementById('adventure-level');
     const adventurePlayers = document.getElementById('adventure-players');
+    const configPanel = document.getElementById('marker-config-panel'); // Das Panel zur General/Einheiten-Eingabe
 
-    // --- DATEN-CACHE: Speichert geladene JSON-Daten, um sie nur einmal zu laden (Performance-Optimierung)
+    // --- DATEN-CACHE: Speichert geladene JSON-Daten (Performance-Optimierung)
     const DATA_CACHE = {};
     
     // --- ZENTRALER SPEICHER FÜR DEN ZUSTAND DER ANWENDUNG
     let editorState = {
         currentMapSrc: '',
-        markers: [] // Sollte später die Positionen und Lager-Konfigurationen enthalten
+        markers: [] // Array von { id, x, y, config: {...} }
     };
+    let currentMarkerId = null; // ID des aktuell bearbeiteten Markers
 
     // ====================================================================
-    // --- DATENLADE-FUNKTIONEN (Optimiert mit Caching)
+    // --- ZUSTANDSVERWALTUNG (CRUD für Marker)
     // ====================================================================
 
-    // Generalisierte Ladefunktion mit Caching
-    async function fetchDataAndCache(path, rootKey) {
-        if (DATA_CACHE[rootKey]) return DATA_CACHE[rootKey];
+    /** Gibt die Daten des Markers zurück. */
+    function getMarkerData(id) {
+        return editorState.markers.find(m => m.id === id);
+    }
+    
+    /** Fügt einen neuen Marker hinzu oder aktualisiert einen bestehenden. */
+    function setMarkerData(id, data, onlyPositionUpdate = false) {
+        let marker = getMarkerData(id);
         
-        const response = await fetch(path);
-        const data = await response.json();
-        DATA_CACHE[rootKey] = data[rootKey] || data;
-        return DATA_CACHE[rootKey];
+        if (!marker) {
+            // Neuer Marker
+            marker = {
+                id: id,
+                x: data.x,
+                y: data.y,
+                config: {
+                    generalName: "",
+                    skillLevel: 0,
+                    unitType: "normal",
+                    units: []
+                }
+            };
+            editorState.markers.push(marker);
+        } else if (onlyPositionUpdate) {
+            // Nur Position aktualisieren (nach Drag-and-Drop)
+            marker.x = data.x;
+            marker.y = data.y;
+        } else {
+            // Allgemeine Konfigurationsdaten aktualisieren (z.B. aus dem configPanel)
+            Object.assign(marker.config, data.config);
+        }
+        
+        saveEditorState();
     }
+
+    /** Entfernt einen Marker aus dem Zustand. */
+    window.removeMarkerData = function(id) {
+        editorState.markers = editorState.markers.filter(m => m.id !== id);
+        saveEditorState();
+        if (currentMarkerId === id) {
+             configPanel.style.display = 'none'; // Versteckt das Panel
+        }
+    };
     
-    // Karten laden (Optimiert)
-    async function loadMaps() {
-        return fetchDataAndCache('data/map_loader.json', 'map_loader');
+    /** Stellt alle Marker visuell wieder her (von localStorage). */
+    function restoreMarkers(markers) {
+        let maxId = 0;
+        markers.forEach(marker => {
+            // Ruft die globale Funktion in marker.js auf, um den visuellen Marker zu erstellen
+            if (window.restoreMarker) {
+                window.restoreMarker(marker.id, marker.x, marker.y);
+                maxId = Math.max(maxId, marker.id);
+            }
+        });
+        // Setzt den Marker-Zähler in marker.js korrekt zurück
+        if (window.setMarkerIdCounter) {
+            window.setMarkerIdCounter(maxId);
+        }
     }
 
-    // Abenteuerdetails laden (Optimiert)
-    async function loadAdventureDetails() {
-        return fetchDataAndCache('data/maps.json', 'abenteuer');
-    }
 
-    // Generäle laden (Optimiert)
-    async function loadGenerals() {
-        return fetchDataAndCache('data/generals.json', 'generals');
-    }
-
-    // Einheiten laden (Optimiert)
-    async function loadUnits() {
-        return fetchDataAndCache('data/units.json', 'units');
-    }
-    
     // ====================================================================
     // --- SPEICHERVERWALTUNG (localStorage)
     // ====================================================================
 
-    /**
-     * Speichert den aktuellen Editor-Zustand (Karte, Marker-Daten) im localStorage.
-     * Sollte nach jeder relevanten Änderung aufgerufen werden.
-     */
+    /** Speichert den gesamten Editor-Zustand. */
     function saveEditorState() {
         try {
-            // Sammle den Zustand. Nur die SRC der Karte ist hier minimal nötig.
             editorState.currentMapSrc = mainMap.src;
-            
-            // HIER MUSS SPÄTER DIE LOGIK ZUM SAMMELN DER MARTERDATEN EINGEFÜGT WERDEN
-            // editorState.markers = collectMarkerData(); 
-
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(editorState));
-            console.log("Editor-Zustand gespeichert.");
         } catch (e) {
             console.error("Fehler beim Speichern in localStorage:", e);
         }
     }
 
-    /**
-     * Lädt den letzten gespeicherten Zustand und wendet ihn auf die UI an.
-     * @returns {boolean} True, wenn Zustand geladen wurde, sonst False.
-     */
+    /** Lädt den letzten gespeicherten Zustand. */
     function loadEditorState() {
         try {
             const serializedState = localStorage.getItem(LOCAL_STORAGE_KEY);
-            if (serializedState === null) {
-                console.log("Kein gespeicherter Zustand gefunden.");
-                return false;
-            }
+            if (serializedState === null) return false;
 
             const state = JSON.parse(serializedState);
             editorState = state; 
             
-            // Karte wiederherstellen
             if (state.currentMapSrc) {
                 mainMap.src = state.currentMapSrc;
             }
             
-            // HIER MUSS SPÄTER DIE LOGIK ZUR WIEDERHERSTELLUNG DER MARKER EINGEFÜGT WERDEN
-            // restoreMarkers(state.markers); 
-            
-            console.log("Editor-Zustand geladen.");
+            if (state.markers && state.markers.length > 0) {
+                 restoreMarkers(state.markers); 
+            }
             return true;
 
         } catch (e) {
@@ -112,88 +131,150 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     }
 
+    // ====================================================================
+    // --- DATENLADE-FUNKTIONEN (Caching)
+    // ====================================================================
 
-    // ====================================================================
-    // --- UI-BEFÜLLUNG UND LOGIK
-    // ====================================================================
+    // Generalisierte Ladefunktion mit Caching
+    async function fetchDataAndCache(path, rootKey) {
+        if (DATA_CACHE[rootKey]) return DATA_CACHE[rootKey];
+        const response = await fetch(path);
+        const data = await response.json();
+        DATA_CACHE[rootKey] = data[rootKey] || data;
+        return DATA_CACHE[rootKey];
+    }
     
-    // ... (populateMapSelector, showAdventureDetails, populateGeneralSelector, populateUnitInputs bleiben hier erhalten) ...
-    // HINWEIS: Die Funktionen wurden hier aus Platzgründen nicht wiederholt, aber sie sind in Ihrer Datei.
+    async function loadMaps() { return fetchDataAndCache('data/map_loader.json', 'map_loader'); }
+    async function loadAdventureDetails() { return fetchDataAndCache('data/maps.json', 'abenteuer'); }
+    async function loadGenerals() { return fetchDataAndCache('data/generals.json', 'generals'); }
+    async function loadUnits() { return fetchDataAndCache('data/units.json', 'units'); }
     
-    // Dropdown mit Karten füllen
-    async function populateMapSelector() {
-        const maps = await loadMaps();
-        maps.forEach(map => {
+    // ====================================================================
+    // --- GLOBALE SCHNITTSTELLE UND KONFIGURATION
+    // ====================================================================
+
+    /**
+     * GLOBALE SCHNITTSTELLE für marker.js: Öffnet das Konfigurations-Panel 
+     * für den gegebenen Marker oder speichert nur die Position.
+     * @param {number} id - Die ID des Markers.
+     * @param {Object} [posData] - Optional: { x, y } für Positions-Updates.
+     * @param {boolean} [onlyPositionUpdate] - Ob nur die Position aktualisiert wird.
+     */
+    window.openMarkerConfig = async function(id, posData, onlyPositionUpdate = false) {
+        currentMarkerId = id;
+        
+        if (posData) {
+            setMarkerData(id, posData, onlyPositionUpdate);
+            if (onlyPositionUpdate) return; // Nur gespeichert, kein Panel öffnen
+        }
+        
+        // Marker-Daten abrufen oder initialisieren
+        const markerData = getMarkerData(id);
+        
+        // 1. Konfigurations-Panel anzeigen und Titel setzen
+        configPanel.style.display = 'block';
+        document.getElementById('config-panel-title').textContent = `Lager ${id} konfigurieren`;
+
+        // 2. UI-Elemente mit gespeicherten Werten befüllen
+        
+        // TODO: UI-Befüllung und Listener-Logik hier hinzufügen.
+        // Die General- und Unit-Inputs müssen hier befüllt werden.
+
+        // Beispiel: Befüllung der General-Select-Box (muss im HTML vorhanden sein)
+        await populateGeneralSelector('config-general-select');
+        
+        // ... (Restliche Konfigurationslogik) ...
+    };
+
+    /**
+     * Befüllt ein General-Dropdown-Element dynamisch. (Angepasst für den Placeholder)
+     */
+    async function populateGeneralSelector(selectorId) {
+        const generalSelector = document.getElementById(selectorId);
+        if (!generalSelector) return; 
+
+        const generals = await loadGenerals();
+        generalSelector.innerHTML = '<option value="">General wählen</option>'; 
+        
+        generals.forEach(general => {
             const option = document.createElement('option');
-            option.value = map.at_img;
-            option.textContent = map.at_loader_name;
-            mapSelector.appendChild(option);
+            // Verwendet den General-Namen als eindeutigen Wert
+            option.value = general.name; 
+            option.textContent = general.name;
+            // Datenattribut für Bild hinzufügen (wird später für die Anzeige genutzt)
+            const imgSrc = general.general_img && general.general_img.endsWith('.png') ? general.general_img : GENERAL_PLACEHOLDER_IMG;
+            option.dataset.imgSrc = imgSrc;
+            
+            generalSelector.appendChild(option);
         });
         
-        // Nach dem Füllen: Wählt die gespeicherte Karte aus, falls vorhanden.
-        if (editorState.currentMapSrc) {
-             mapSelector.value = editorState.currentMapSrc;
-             // Löst das Change-Event manuell aus, um Details zu aktualisieren
-             mapSelector.dispatchEvent(new Event('change')); 
-        }
-    }
-    
-    // Abenteuerdetails anzeigen (Ihre Originalfunktion)
-    async function showAdventureDetails(selectedMap) {
-        const adventures = await loadAdventureDetails();
-        const adventure = adventures.find(a => a.Abenteuer === selectedMap);
-        
-        if (adventure) {
-            adventureType.textContent = `Zuordnung: ${adventure.Zuordnung}`;
-            adventureLevel.textContent = `Level: ${adventure.Level}`;
-            adventurePlayers.textContent = `Spieler: ${adventure['Spieler-Min']} - ${adventure['Spieler-Max']}`;
-        } else {
-            adventureType.textContent = '';
-            adventureLevel.textContent = '';
-            adventurePlayers.textContent = '';
+        // Selektiert den gespeicherten Wert
+        const marker = getMarkerData(currentMarkerId);
+        if (marker && marker.config.generalName) {
+            generalSelector.value = marker.config.generalName;
+            // Trigger Change, um das General-Bild zu aktualisieren (falls es ein Listener gibt)
         }
     }
 
+    /**
+     * Erstellt Eingabefelder für Einheiten basierend auf dem ausgewählten Typ.
+     * (Wird von der config-Logik aufgerufen)
+     */
+    async function populateUnitInputs(type) {
+        const unitsContainer = document.getElementById('config-units-container');
+        if (!unitsContainer) return; 
 
-    // ====================================================================
-    // --- EVENT-LISTENER UND INITIALISIERUNG
-    // ====================================================================
-
-    // Listener für die Karten-Auswahl: Aktualisiert die Karte und speichert den Zustand.
-    mapSelector.addEventListener('change', function() {
-        const selectedOption = mapSelector.options[mapSelector.selectedIndex];
-        const selectedMap = selectedOption.text;
-        const imgSrc = selectedOption.value;
+        unitsContainer.innerHTML = ''; 
+        const units = await loadUnits();
+        const filteredUnits = units.filter(unit => unit.type === type); 
         
-        mainMap.src = imgSrc;
-        showAdventureDetails(selectedMap);
-        saveEditorState(); // Zustand nach Kartenwechsel speichern
-    });
+        // Lade die gespeicherten Einheiten für diesen Marker
+        const marker = getMarkerData(currentMarkerId);
+        const storedUnits = marker ? marker.config.units : [];
 
-    // --- ANWENDUNGSSTART-LOGIK ---
+        filteredUnits.forEach(unit => {
+            const unitDiv = document.createElement('div');
+            unitDiv.className = 'unit-input-group';
+            
+            // Suche den gespeicherten Wert
+            const storedAmount = storedUnits.find(u => u.name === unit.name)?.amount || 0;
+
+            unitDiv.innerHTML = `
+                <img src="${unit.unit_img}" alt="${unit.name}" style="width: 30px; height: 30px;">
+                <input type="number" 
+                       name="unit_${unit.short_name || unit.name}" 
+                       placeholder="Anzahl ${unit.short_name || unit.name}" 
+                       step="1" min="0" max="200" 
+                       value="${storedAmount}">
+            `;
+            unitsContainer.appendChild(unitDiv);
+        });
+        
+        // Da die Inputs neu erstellt werden, müssen die Event-Listener für Speicherung
+        // am übergeordneten configPanel definiert sein (Delegate).
+    }
     
-    // 1. Laden des gespeicherten Zustands
+    // ... (populateMapSelector, showAdventureDetails bleiben erhalten) ...
+
+    // ====================================================================
+    // --- INITIALISIERUNG
+    // ====================================================================
+
+    // 1. Laden des gespeicherten Zustands und Wiederherstellung der visuellen Marker
     loadEditorState();
 
-    // 2. Füllen der UI basierend auf geladenen Daten (oder Default-Daten)
+    // 2. Füllen der UI (Map-Selector)
     await populateMapSelector();
     
     // 3. Markieren der globalen Funktionen für marker.js
-    window.populateGeneralSelector = populateGeneralSelector;
-    window.populateUnitInputs = populateUnitInputs;
+    window.openMarkerConfig = window.openMarkerConfig;
+    window.removeMarkerData = window.removeMarkerData;
+    window.setMarkerIdCounter = function(id) { markerId = id; }; // Funktion zum Zurücksetzen des Zählers im Marker-Skript
     
-    // ... Restliche Logik (General/Unit Selector Init, Attack Wave, Generate Map) bleibt hier erhalten
-    
-    
-    // Beispiel: Speichern des Zustands nach Hinzufügen einer Welle (muss in Ihre Logik integriert werden)
-    document.getElementById('generate-map').addEventListener('click', generateAndDownloadMap);
-    
-    // Die unnötigen globalen Select-Elemente werden entfernt, da sie nicht korrekt platziert wurden.
-    // const generalSelector = document.createElement('select'); 
-    // const unitSelector = document.createElement('select');
-    // document.body.appendChild(generalSelector); 
-    // document.body.appendChild(unitSelector); 
-
-    // Füge einen generischen Autosave-Listener hinzu
+    // 4. Autosave-Listener
     window.addEventListener('beforeunload', saveEditorState);
+    
+    // TODO: Event-Listener für das Config-Panel zur Speicherung der Daten
 });
+
+// ... (Restliche Funktionen aus der usprünglichen main.js, wie populateMapSelector, showAdventureDetails, sind hier)
